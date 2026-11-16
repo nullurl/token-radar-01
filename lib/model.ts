@@ -566,6 +566,47 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
   return { board, radar };
 }
 
+/** A nullable finite number from an unknown value, else null. */
+function asNullableNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/** A nullable string from an unknown value, else null. */
+function asNullableString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+/** The string entries of an unknown value, else an empty list. */
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((c): c is string => typeof c === 'string') : [];
+}
+
+/** One protocol entry out of a snapshot's protocols array, refused unless it is scorable. */
+function parseProtocol(value: unknown, i: number): SnapshotProtocol {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new SnapshotError(`snapshot.json's protocol ${i} is not an object`);
+  }
+  const p = value as Record<string, unknown>;
+  if (typeof p.slug !== 'string' || typeof p.name !== 'string' || typeof p.tvl_usd !== 'number' || !Number.isFinite(p.tvl_usd)) {
+    throw new SnapshotError(`snapshot.json's protocol ${i} lacks a slug, a name or a TVL`);
+  }
+  if (p.tvl_usd < 0) {
+    throw new SnapshotError(`snapshot.json's protocol ${i} (${p.slug}) has a negative TVL`);
+  }
+  return {
+    slug: p.slug,
+    name: p.name,
+    category: asNullableString(p.category),
+    chains: asStringArray(p.chains),
+    tvl_usd: p.tvl_usd,
+    change_7d: asNullableNumber(p.change_7d),
+    mcap_usd: asNullableNumber(p.mcap_usd),
+    listed_at: asNullableString(p.listed_at),
+    gecko_id: asNullableString(p.gecko_id),
+    symbol: asNullableString(p.symbol),
+  };
+}
+
 /** The snapshot out of a file's text, refused unless it is the shape the model scores. */
 export function parseSnapshot(text: string): Snapshot {
   let raw: unknown;
@@ -581,30 +622,11 @@ export function parseSnapshot(text: string): Snapshot {
   if (typeof o.floor_usd !== 'number' || !Number.isSafeInteger(o.floor_usd) || o.floor_usd <= 0) throw new SnapshotError('snapshot.json has no floor_usd');
   if (!Array.isArray(o.protocols)) throw new SnapshotError('snapshot.json has no protocols array');
   if (!Array.isArray(o.watchlist) || o.watchlist.some((s) => typeof s !== 'string')) throw new SnapshotError('snapshot.json has no watchlist of slugs');
-  const protocols = o.protocols.map((v, i) => {
-    if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new SnapshotError(`snapshot.json's protocol ${i} is not an object`);
-    const p = v as Record<string, unknown>;
-    if (typeof p.slug !== 'string' || typeof p.name !== 'string' || typeof p.tvl_usd !== 'number' || !Number.isFinite(p.tvl_usd)) {
-      throw new SnapshotError(`snapshot.json's protocol ${i} lacks a slug, a name or a TVL`);
-    }
-    return {
-      slug: p.slug,
-      name: p.name,
-      category: typeof p.category === 'string' ? p.category : null,
-      chains: Array.isArray(p.chains) ? p.chains.filter((c): c is string => typeof c === 'string') : [],
-      tvl_usd: p.tvl_usd,
-      change_7d: typeof p.change_7d === 'number' && Number.isFinite(p.change_7d) ? p.change_7d : null,
-      mcap_usd: typeof p.mcap_usd === 'number' && Number.isFinite(p.mcap_usd) ? p.mcap_usd : null,
-      listed_at: typeof p.listed_at === 'string' ? p.listed_at : null,
-      gecko_id: typeof p.gecko_id === 'string' ? p.gecko_id : null,
-      symbol: typeof p.symbol === 'string' ? p.symbol : null,
-    };
-  });
   return {
     as_of: o.as_of,
     source: o.source,
     floor_usd: o.floor_usd,
-    protocols,
+    protocols: o.protocols.map((v, i) => parseProtocol(v, i)),
     watchlist: o.watchlist as string[],
   };
 }

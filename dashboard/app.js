@@ -8,7 +8,7 @@
   var DATA = window.RADAR;
   if (!DATA) return;
   var app = document.getElementById('board');
-  var state = { q: '', category: 'all', chain: 'all', watchlistOnly: false, tab: 'pre-token', sort: 'implied', dir: -1, selected: null, sandbox: null };
+  var state = { q: '', category: 'all', chain: '', watchlistOnly: false, tab: 'pre-token', sort: 'implied', dir: -1, selected: null, sandbox: null };
   var WATCHLIST = {};
   (DATA.watchlist || []).forEach(function (s) { WATCHLIST[s] = true; });
 
@@ -157,7 +157,7 @@
     var params = new URLSearchParams();
     if (state.q) params.set('q', state.q);
     if (state.category !== 'all') params.set('category', state.category);
-    if (state.chain !== 'all') params.set('chain', state.chain);
+    if (state.chain) params.set('chain', state.chain);
     if (state.watchlistOnly) params.set('w', '1');
     if (state.selected) params.set('p', state.selected);
     var next = params.toString();
@@ -169,7 +169,7 @@
     var q = state.q.trim().toLowerCase();
     return DATA.rows.filter(function (r) {
       if (state.category !== 'all' && r.category !== state.category) return false;
-      if (state.chain !== 'all' && !(r.chains || []).some(function (c) { return c === state.chain; })) return false;
+      if (state.chain && !(r.chains || []).some(function (c) { return c.toLowerCase().indexOf(state.chain.toLowerCase()) >= 0; })) return false;
       if (state.watchlistOnly && !WATCHLIST[r.slug]) return false;
       if (!q) return true;
       var hay = [r.name, r.slug, r.category, (r.chains || []).join(' ')].join(' ').toLowerCase();
@@ -203,6 +203,9 @@
   }
 
   function lede() {
+    var total = DATA.rows.reduce(function (sum, r) { return sum + r.implied_value_usd; }, 0);
+    var sorted = DATA.rows.map(function (r) { return r.implied_value_usd; }).sort(function (a, b) { return a - b; });
+    var mid = sorted[Math.floor(sorted.length / 2)];
     return el('section', { class: 'lede' },
       el('div', null,
         el('h1', { text: DATA.watchlist_size + ' watchlist protocols, ranked by implied value' }),
@@ -212,6 +215,8 @@
         el('div', { class: 'fact' }, el('span', { text: 'Watchlist covered' }), el('b', { text: DATA.watchlist_size + ' / ' + DATA.watchlist_size })),
         el('div', { class: 'fact' }, el('span', { text: 'Pre-token rows scored' }), el('b', { text: String(DATA.board_size) })),
         el('div', { class: 'fact' }, el('span', { text: 'Early rows below the floor' }), el('b', { text: String(DATA.early_size) })),
+        el('div', { class: 'fact' }, el('span', { text: 'Total implied value' }), el('b', { text: fmtUsd(total) })),
+        el('div', { class: 'fact' }, el('span', { text: 'Median implied value' }), el('b', { text: fmtUsd(mid) })),
         el('div', { class: 'fact' }, el('span', { text: 'Live-token protocols set aside' }), el('b', { text: String(DATA.live_size) }))
       )
     );
@@ -237,7 +242,12 @@
     var categories = Array.from(new Set(DATA.rows.map(function (r) { return r.category || 'Other'; }))).sort();
     var chainCounts = {};
     DATA.rows.forEach(function (r) { (r.chains || []).forEach(function (c) { chainCounts[c] = (chainCounts[c] || 0) + 1; }); });
-    var chains = Object.keys(chainCounts).sort(function (a, b) { return chainCounts[b] - chainCounts[a]; }).slice(0, 12);
+    var chains = Object.keys(chainCounts).sort(function (a, b) { return chainCounts[b] - chainCounts[a]; });
+    var chainInput = el('input', { type: 'text', id: 'chain', list: 'chain-list', placeholder: 'All chains', value: state.chain, 'aria-label': 'Filter by chain' });
+    chainInput.addEventListener('input', function () { state.chain = chainInput.value; writeHash(); render(); });
+    var chainList = el('datalist', { id: 'chain-list' },
+      chains.map(function (c) { return el('option', { value: c, text: c + ' (' + chainCounts[c] + ')' }); })
+    );
     var search = el('input', { type: 'search', id: 'q', placeholder: 'Search name, category or chain', value: state.q, 'aria-label': 'Search the board' });
     search.addEventListener('input', function () { state.q = search.value; writeHash(); render(); });
     var select = el('select', { id: 'category', 'aria-label': 'Filter by category' },
@@ -245,23 +255,50 @@
       categories.map(function (c) { return el('option', { value: c, text: c, selected: c === state.category ? 'selected' : null }); })
     );
     select.addEventListener('change', function () { state.category = select.value; writeHash(); render(); });
-    var chainSelect = el('select', { id: 'chain', 'aria-label': 'Filter by chain' },
-      el('option', { value: 'all', text: 'All chains' }),
-      chains.map(function (c) { return el('option', { value: c, text: c + ' (' + chainCounts[c] + ')', selected: c === state.chain ? 'selected' : null }); })
-    );
-    chainSelect.addEventListener('change', function () { state.chain = chainSelect.value; writeHash(); render(); });
     var wl = el('input', { type: 'checkbox', id: 'watchlist-only', checked: state.watchlistOnly ? 'checked' : null });
     wl.addEventListener('change', function () { state.watchlistOnly = wl.checked; writeHash(); render(); });
     var pre = el('button', { type: 'button', 'aria-pressed': state.tab === 'pre-token' ? 'true' : 'false', text: 'Pre-token', onclick: function () { state.tab = 'pre-token'; render(); } });
     var live = el('button', { type: 'button', 'aria-pressed': state.tab === 'live' ? 'true' : 'false', text: 'Live token', onclick: function () { state.tab = 'live'; render(); } });
+    var csv = el('button', { class: 'button', type: 'button', text: 'Download CSV', onclick: function () { downloadCsv(); } });
     return el('div', { class: 'controls' },
       el('div', { class: 'field' }, el('label', { for: 'q', text: 'Search' }), search),
       el('div', { class: 'field' }, el('label', { for: 'category', text: 'Category' }), select),
-      el('div', { class: 'field' }, el('label', { for: 'chain', text: 'Chain' }), chainSelect),
+      el('div', { class: 'field' }, el('label', { for: 'chain', text: 'Chain' }), chainInput, chainList),
       el('div', { class: 'field check' }, el('label', { for: 'watchlist-only', text: 'Watchlist only' }), wl),
       el('div', { class: 'field' }, el('span', { class: 'sub', text: 'Token status' }), el('div', { class: 'tabs' }, pre, live)),
+      el('div', { class: 'field' }, el('span', { class: 'sub', text: 'Export' }), csv),
       el('span', { class: 'count', text: state.tab === 'pre-token' ? rows().length + ' rows shown' : DATA.live.length + ' live-token protocols' })
     );
+  }
+
+  // The board as a spreadsheet: the rows on screen, in the order on screen, with the canonical
+  // implied values. A download, not a link: the page stays offline.
+  function downloadCsv() {
+    var list = state.tab === 'pre-token' ? sortedRows(rows()) : DATA.live;
+    function cell(v) {
+      var s = v === null || v === undefined ? '' : String(v);
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }
+    var lines = ['rank,name,slug,category,chains,tvl_usd,change_7d,age_days,implied_value_usd'];
+    list.forEach(function (r) {
+      lines.push([
+        r.rank !== undefined ? r.rank : 'live',
+        cell(r.name), cell(r.slug), cell(r.category || ''),
+        cell((r.chains || []).join(';')),
+        r.tvl_usd, r.change_7d === null ? '' : r.change_7d,
+        r.age_days === null || r.age_days === undefined ? '' : r.age_days,
+        r.implied_value_usd !== undefined ? r.implied_value_usd : ''
+      ].join(','));
+    });
+    var blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'token-radar-' + DATA.as_of + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
   }
 
   function sortHeader(key, label) {
@@ -279,7 +316,7 @@
       return el('div', { class: 'panel' }, el('div', { class: 'empty' },
         el('h2', { text: 'No protocol matches that filter' }),
         el('p', { text: 'Clear the search or pick another category to see the board again.' }),
-        el('button', { class: 'button primary', type: 'button', text: 'Clear filters', onclick: function () { state.q = ''; state.category = 'all'; state.chain = 'all'; state.watchlistOnly = false; writeHash(); render(); } })
+        el('button', { class: 'button primary', type: 'button', text: 'Clear filters', onclick: function () { state.q = ''; state.category = 'all'; state.chain = ''; state.watchlistOnly = false; writeHash(); render(); } })
       ));
     }
     var max = effectiveValue(list[0]) || 1;

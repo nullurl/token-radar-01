@@ -128,8 +128,8 @@ tbody tr[data-selected="true"] { background: color-mix(in srgb, var(--accent) 8%
 .steps b { display: block; font-weight: 500; }
 .cost { color: var(--muted); font-size: 12px; font-family: var(--font-num); }
 
-.spotlight { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--step-3); padding-bottom: var(--step-5); }
-.spot {
+.noscript { max-width: 1320px; margin: var(--step-5) auto; padding: 0 var(--step-6); color: var(--muted); }
+.spotlight { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--step-3); padding-bottom: var(--step-5); }.spot {
   display: grid; gap: 2px; text-align: left; padding: var(--step-4);
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-panel);
 }
