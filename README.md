@@ -40,6 +40,7 @@ MAKEFUN_OUTPUT_DIR=out node main.ts --input path/to/snapshot.json
 - `lib/model.ts` — the model, the board builder, the farm plans and the snapshot parser.
 - `dashboard/` — the static page (`index.html`, `app.css`, `app.js`).
 - `screenshots/` — three real renders of the page: the board, a detail view, a filtered view.
+- `tests/` — model tests (Node's built-in runner, no dependencies): `node --test tests/model.test.ts`.
 - `vendor/makefun-board.ts` — the kit's vendored dossier builder, unchanged.
 
 ---
