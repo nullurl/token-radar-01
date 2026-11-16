@@ -76,6 +76,26 @@ export const MODEL: ModelConstants = {
   breadth_max_steps: 4,
 };
 
+/** Why a set of model constants is not one the model may run with, or null. */
+export function validateModel(model: ModelConstants): string | null {
+  const checks: Array<[boolean, string]> = [
+    [Number.isFinite(model.growth_weight) && model.growth_weight >= 0 && model.growth_weight <= 2, 'growth_weight must be between 0 and 2'],
+    [Number.isFinite(model.growth_floor) && model.growth_floor >= -100 && model.growth_floor < 0, 'growth_floor must be between -100 and 0'],
+    [Number.isFinite(model.growth_cap) && model.growth_cap > 0 && model.growth_cap <= 1000, 'growth_cap must be between 0 and 1000'],
+    [Number.isFinite(model.maturity_floor) && model.maturity_floor > 0 && model.maturity_floor <= 1, 'maturity_floor must be between 0 and 1'],
+    [Number.isFinite(model.maturity_range) && model.maturity_range >= 0 && model.maturity_floor + model.maturity_range <= 2, 'maturity_floor + maturity_range must be at most 2'],
+    [Number.isInteger(model.maturity_days) && model.maturity_days > 0, 'maturity_days must be a positive integer'],
+    [Number.isInteger(model.unknown_age_days) && model.unknown_age_days >= 0, 'unknown_age_days must be a non-negative integer'],
+    [Number.isFinite(model.multiple_floor) && model.multiple_floor > 0, 'multiple_floor must be positive'],
+    [Number.isFinite(model.multiple_cap) && model.multiple_cap >= model.multiple_floor, 'multiple_cap must be at least multiple_floor'],
+    [Number.isInteger(model.min_category_n) && model.min_category_n >= 1, 'min_category_n must be a positive integer'],
+    [Number.isFinite(model.breadth_step) && model.breadth_step >= 0 && model.breadth_step <= 0.25, 'breadth_step must be between 0 and 0.25'],
+    [Number.isInteger(model.breadth_max_steps) && model.breadth_max_steps >= 0, 'breadth_max_steps must be a non-negative integer'],
+  ];
+  for (const [ok, message] of checks) if (!ok) return message;
+  return null;
+}
+
 /** The model's version label: the dashboard names it and the rules quote it. */
 export const MODEL_VERSION = 'radar-2';
 

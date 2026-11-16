@@ -8,7 +8,7 @@
   var DATA = window.RADAR;
   if (!DATA) return;
   var app = document.getElementById('board');
-  var state = { q: '', category: 'all', chain: 'all', watchlistOnly: false, tab: 'pre-token', sort: 'implied', dir: -1, selected: null };
+  var state = { q: '', category: 'all', chain: 'all', watchlistOnly: false, tab: 'pre-token', sort: 'implied', dir: -1, selected: null, sandbox: null };
   var WATCHLIST = {};
   (DATA.watchlist || []).forEach(function (s) { WATCHLIST[s] = true; });
 
@@ -40,6 +40,24 @@
     var chains = row.chains ? row.chains.length : 0;
     var breadth = 1 + model.breadth_step * Math.min(Math.max(chains - 1, 0), model.breadth_max_steps);
     return Math.max(1, Math.round(row.tvl_usd * row.category_multiple * growthMult * maturity * breadth));
+  }
+
+  // The sandbox: the same function with the reader's own constants. It re-ranks the board in the
+  // browser only; board.json and the detail drawer's numbers stay canonical.
+  function sandboxImpliedOf(row) {
+    var s = state.sandbox;
+    if (!s) return row.implied_value_usd;
+    var model = DATA.model;
+    var growth = Math.min(model.growth_cap, Math.max(model.growth_floor, row.change_7d === null || row.change_7d === undefined ? 0 : row.change_7d));
+    var growthMult = 1 + (growth / 100) * s.growth_weight;
+    var age = row.age_days === null || row.age_days === undefined ? model.unknown_age_days : row.age_days;
+    var maturity = model.maturity_floor + (Math.min(Math.max(age, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
+    var chains = row.chains ? row.chains.length : 0;
+    var breadth = 1 + s.breadth_step * Math.min(Math.max(chains - 1, 0), model.breadth_max_steps);
+    return Math.max(1, Math.round(row.tvl_usd * row.category_multiple * s.multiple_scale * growthMult * maturity * breadth));
+  }
+  function effectiveValue(row) {
+    return state.sandbox ? sandboxImpliedOf(row) : row.implied_value_usd;
   }
 
   function el(tag, attrs) {
@@ -166,7 +184,7 @@
       else if (key === 'tvl') { av = a.tvl_usd; bv = b.tvl_usd; }
       else if (key === 'growth') { av = a.change_7d === null ? -Infinity : a.change_7d; bv = b.change_7d === null ? -Infinity : b.change_7d; }
       else if (key === 'age') { av = a.age_days === null ? Infinity : a.age_days; bv = b.age_days === null ? Infinity : b.age_days; }
-      else { av = a.implied_value_usd; bv = b.implied_value_usd; }
+      else { av = effectiveValue(a); bv = effectiveValue(b); }
       if (av < bv) return -state.dir;
       if (av > bv) return state.dir;
       return a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0;
@@ -264,11 +282,12 @@
         el('button', { class: 'button primary', type: 'button', text: 'Clear filters', onclick: function () { state.q = ''; state.category = 'all'; state.chain = 'all'; state.watchlistOnly = false; writeHash(); render(); } })
       ));
     }
-    var max = list[0].implied_value_usd || 1;
+    var max = effectiveValue(list[0]) || 1;
     var tbody = el('tbody');
     list.forEach(function (r) {
       var growth = r.change_7d === null ? 'n/a' : fmtPct(r.change_7d);
       var growthClass = r.change_7d === null ? '' : r.change_7d >= 0 ? 'pos' : 'neg';
+      var value = effectiveValue(r);
       var tr = el('tr', {
         'data-selected': state.selected === r.slug ? 'true' : 'false',
         tabindex: '0',
@@ -284,8 +303,8 @@
         el('td', { class: 'num ' + growthClass, text: growth }),
         el('td', { class: 'num', text: fmtAge(r.age_days) }),
         el('td', null, el('div', { class: 'implied' },
-          el('div', { class: 'bar', 'aria-hidden': 'true' }, el('i', { style: 'width:' + Math.max(3, Math.round((r.implied_value_usd / max) * 100)) + '%' })),
-          el('span', { class: 'num', text: fmtUsd(r.implied_value_usd) })
+          el('div', { class: 'bar', 'aria-hidden': 'true' }, el('i', { style: 'width:' + Math.max(3, Math.round((value / max) * 100)) + '%' })),
+          el('span', { class: 'num', text: (state.sandbox ? '~' : '') + fmtUsd(value) })
         )),
         el('td', null, el('span', { class: 'status', text: WATCHLIST[r.slug] ? 'watchlist' : 'early' }))
       );
@@ -294,7 +313,7 @@
     return el('div', { class: 'panel' },
       el('div', { class: 'table-wrap' },
         el('table', null,
-          el('caption', { class: 'sub', text: 'Pre-token protocols, strongest implied value first. Select a row for its model and farm plan.' }),
+          el('caption', { class: 'sub', text: state.sandbox ? 'Sandbox active: rows re-ranked by your constants; the ranks shown are the canonical board ranks and the values are approximate.' : 'Pre-token protocols, strongest implied value first. Select a row for its model and farm plan.' }),
           el('thead', null, el('tr', null,
             sortHeader('implied', 'Rank'),
             sortHeader('name', 'Protocol'),
@@ -330,6 +349,38 @@
           tbody
         )
       )
+    );
+  }
+
+  function sandboxPanel() {
+    var m = DATA.model;
+    var s = state.sandbox || { growth_weight: m.growth_weight, multiple_scale: 1, breadth_step: m.breadth_step };
+    function slider(id, label, min, max, step, value, format) {
+      var input = el('input', { type: 'range', id: id, min: String(min), max: String(max), step: String(step), value: String(value), 'aria-label': label });
+      var out = el('output', { class: 'num', for: id, text: format(value) });
+      input.addEventListener('input', function () {
+        var next = state.sandbox || { growth_weight: m.growth_weight, multiple_scale: 1, breadth_step: m.breadth_step };
+        next[id] = parseFloat(input.value);
+        state.sandbox = next;
+        out.textContent = format(next[id]);
+      });
+      // Re-rank on release, not on every tick: a render mid-drag would replace the slider under the pointer.
+      input.addEventListener('change', function () { render(); });
+      return el('div', { class: 'sandbox-field' },
+        el('label', { for: id, text: label }),
+        input,
+        out
+      );
+    }
+    return el('section', { class: 'panel sandbox' },
+      el('h2', { text: 'Model sandbox' }),
+      el('p', { class: 'sub', text: 'Change the constants and the board re-ranks in front of you. The sandbox never touches board.json: the canonical board stays as the model scored it, and the detail drawer always shows the canonical numbers.' }),
+      el('div', { class: 'sandbox-controls' },
+        slider('growth_weight', 'Growth weight', 0, 1, 0.05, s.growth_weight, function (v) { return v.toFixed(2) + ' (canonical ' + m.growth_weight.toFixed(2) + ')'; }),
+        slider('multiple_scale', 'Multiple scale', 0.5, 2, 0.05, s.multiple_scale, function (v) { return v.toFixed(2) + 'x' + (v === 1 ? ' (canonical)' : ''); }),
+        slider('breadth_step', 'Breadth step', 0, 0.1, 0.01, s.breadth_step, function (v) { return v.toFixed(2) + ' (canonical ' + m.breadth_step.toFixed(2) + ')'; })
+      ),
+      el('button', { class: 'button', type: 'button', text: state.sandbox ? 'Reset to the canonical model' : 'Canonical model in use', onclick: function () { state.sandbox = null; render(); } })
     );
   }
 
@@ -416,7 +467,10 @@
     shell.appendChild(spotlight());
     shell.appendChild(controls());
     shell.appendChild(state.tab === 'pre-token' ? boardTable() : liveTable());
-    if (state.tab === 'pre-token') shell.appendChild(modelPanel());
+    if (state.tab === 'pre-token') {
+      shell.appendChild(sandboxPanel());
+      shell.appendChild(modelPanel());
+    }
     app.appendChild(shell);
     app.setAttribute('aria-busy', 'false');
     if (!dialog.isConnected) app.appendChild(dialog);

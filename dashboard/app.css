@@ -142,6 +142,13 @@ tbody tr[data-selected="true"] { background: color-mix(in srgb, var(--accent) 8%
 table.multiples { font-size: 13px; }
 table.multiples th, table.multiples td { padding: var(--step-2) var(--step-3); }
 .model h3 { margin-top: var(--step-3); }
+.sandbox { margin-top: var(--step-4); padding: var(--step-5); display: grid; gap: var(--step-3); }
+.sandbox-controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--step-5); }
+.sandbox-field { display: grid; gap: var(--step-1); }
+.sandbox-field label { color: var(--muted); font-size: 12px; }
+.sandbox-field input[type="range"] { width: 100%; accent-color: var(--accent); }
+.sandbox-field output { font-size: 13px; }
+.sandbox .button { justify-self: start; }
 
 @media (max-width: 900px) {
   .shell { padding: var(--step-4); }
@@ -149,6 +156,7 @@ table.multiples th, table.multiples td { padding: var(--step-2) var(--step-3); }
   .facts { border-left: 0; border-top: 1px solid var(--border); padding-left: 0; padding-top: var(--step-4); }
   .field input { min-width: 0; width: 100%; }
   .spotlight { grid-template-columns: 1fr; }
+  .sandbox-controls { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }

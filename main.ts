@@ -1,4 +1,4 @@
-// A working token-radar-01 entry (Node 22, standard library only).
+// Token Radar's entrypoint (Node 22, standard library only): the radar-2 build.
 //
 // The program reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), scores every
 // pre-token protocol with the model in lib/model.ts, writes the ranked board to /output/board.json, and
@@ -6,9 +6,15 @@
 // the summary the judge reads, with the vendored make.fun library.
 //
 // The dashboard is a static page, no framework and no network: dashboard/index.html, dashboard/app.css
-// and dashboard/app.js read /output/data.js, which this program writes from the same board. A starting
-// point, not a winner: it covers the watchlist, states the model and gives every protocol a farm plan.
-// Change the model, the page or the plan; keep the gate's shape.
+// and dashboard/app.js read /output/data.js, which this program writes from the same board. The page
+// carries a model sandbox that re-ranks the board in the browser; this program always writes the
+// canonical board, so the sandbox never changes what the gate grades.
+//
+// --model key=value,... overrides model constants for an experiment run (growth_weight,
+// growth_floor, growth_cap, maturity_floor, maturity_range, maturity_days, unknown_age_days,
+// multiple_floor, multiple_cap, min_category_n, breadth_step, breadth_max_steps). Overrides are
+// validated by lib/model.ts and refused when they leave the sane ranges; an experiment run still
+// writes the same gate shape, and the dashboard states the constants it was built with.
 //
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
@@ -16,7 +22,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { boardIssue, buildRadar, dataScript, parseSnapshot } from './lib/model.ts';
+import { MODEL, boardIssue, buildRadar, dataScript, parseSnapshot, validateModel } from './lib/model.ts';
 import { buildDossier } from './vendor/makefun-board.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
@@ -25,6 +31,8 @@ const here = fileURLToPath(new URL('.', import.meta.url));
 const TEXT_MAX_BYTES = 65_536;
 const SCREENSHOT_CAPS = { max: 4, max_bytes: 524_288 };
 const IMAGE_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
+/** The dossier's own guidance for a legible screenshot: advisory here, the gate's call on the site. */
+const SCREENSHOT_ADVISORY = { min_bytes: 300_000, max_bytes: 350_000 };
 
 /** --name <value> out of the arguments, or the fallback. */
 function arg(name: string, fallback: string): string {
@@ -32,6 +40,32 @@ function arg(name: string, fallback: string): string {
   if (at >= 0 && at + 1 < process.argv.length) return process.argv[at + 1]!;
   const withEquals = process.argv.find((a) => a.startsWith(`--${name}=`));
   return withEquals === undefined ? fallback : withEquals.slice(name.length + 3);
+}
+
+/** --model key=value,... out of the arguments, as a partial model override. */
+function modelOverrides(): Partial<typeof MODEL> {
+  const raw = arg('model', '');
+  if (raw === '') return {};
+  const overrides: Record<string, number> = {};
+  for (const part of raw.split(',')) {
+    const eq = part.indexOf('=');
+    if (eq <= 0) {
+      process.stderr.write(`token radar: --model wants key=value pairs, got ${JSON.stringify(part)}\n`);
+      process.exit(2);
+    }
+    const key = part.slice(0, eq).trim();
+    const value = Number(part.slice(eq + 1).trim());
+    if (!(key in MODEL)) {
+      process.stderr.write(`token radar: --model has no constant named ${JSON.stringify(key)}\n`);
+      process.exit(2);
+    }
+    if (!Number.isFinite(value)) {
+      process.stderr.write(`token radar: --model ${key} is not a number: ${JSON.stringify(part.slice(eq + 1))}\n`);
+      process.exit(2);
+    }
+    overrides[key] = value;
+  }
+  return overrides;
 }
 
 const inputArg = arg('input', '/input');
@@ -42,8 +76,15 @@ if (!existsSync(inputFile)) {
 }
 const out = arg('output', process.env.MAKEFUN_OUTPUT_DIR ?? '/output');
 
+const model = { ...MODEL, ...modelOverrides() };
+const modelIssue = validateModel(model);
+if (modelIssue !== null) {
+  process.stderr.write(`token radar: --model refused: ${modelIssue}\n`);
+  process.exit(2);
+}
+
 const snapshot = parseSnapshot(readFileSync(inputFile, 'utf8'));
-const { board, radar } = buildRadar(snapshot);
+const { board, radar } = buildRadar(snapshot, model);
 const issue = boardIssue(board, snapshot);
 if (issue !== null) {
   process.stderr.write(`token radar: the model wrote a board the gate refuses: ${issue}\n`);
@@ -80,12 +121,26 @@ for (const name of shots) {
     process.stderr.write(`token radar: screenshots/${name}: a name is letters, digits and . _ -, 1 to 128 characters\n`);
     process.exit(1);
   }
+  const bytes = statSync(join(out, 'screenshots', name)).size;
+  if (bytes < SCREENSHOT_ADVISORY.min_bytes || bytes > SCREENSHOT_ADVISORY.max_bytes) {
+    process.stderr.write(`token radar: screenshots/${name} is ${bytes} bytes; the dossier asks for ${SCREENSHOT_ADVISORY.min_bytes}..${SCREENSHOT_ADVISORY.max_bytes} (advisory only, the run continues)\n`);
+  }
 }
 
 // The dossier is written last: the scorer rebuilds it from this /output and compares bytes.
 writeFileSync(join(out, 'dossier.json'), buildDossier(out, { text_max_bytes: TEXT_MAX_BYTES, screenshots: SCREENSHOT_CAPS, dashboard: { max_files: 400, max_bytes: 4_194_304 } }));
 
+/** A compact dollar figure for the run summary. */
+function briefUsd(n: number): string {
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
+  return `$${Math.round(n / 1e3)}K`;
+}
+
+const top = board.slice(0, 3).map((r) => `#${r.rank} ${r.name} ${briefUsd(r.implied_value_usd)}`).join(', ');
 process.stdout.write(
   `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.live_size} live set aside)\n` +
+    `token radar: multiples learned: global ${radar.global_multiple.toFixed(3)}x, ${radar.category_multiples.length} categories with ${model.min_category_n}+ live protocols\n` +
+    `token radar: top: ${top}\n` +
     `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (3 files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
 );
